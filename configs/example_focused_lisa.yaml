@@ -1,0 +1,156 @@
+# =============================================================================
+# corrMSI — FOCUSED LISA example config (hypothesis-driven, no cell mapping)
+# -----------------------------------------------------------------------------
+# Narrower follow-up analysis: ROI + correlations + LOCAL Moran only, with
+# explicit pair_subset lists. Global Moran, cell mapping, and hotspot
+# neighbourhood profiling are switched off.
+#
+# Typical use: you've run example_exploratory.yaml, identified a small set of
+# metabolite / metabolite and metabolite / ROI relationships worth mapping at
+# per-pixel resolution, and now want just those LISA maps for a specific
+# study design (here: Ctrl vs HDM samples collapsed into shared ROI groups
+# via roi_group_regex).
+#
+# Usage:
+#   python run_desi_from_config.py configs/example_focused_lisa.yaml
+# =============================================================================
+
+io:
+  zarr_path: "path/to/your/spatialdata.zarr"
+  out_dir: "path/to/your/output_directory"
+
+detect:
+  grid_suffix_candidates: ["_DESI_NORM_grid", "_DESI_grid", "_grid"]
+  roi_suffix_candidates: ["_anatomical_labels", "_roi", "_ROIs", "_labels", "_label"]
+  desi_table_regex: ["DESI.*_obs$", ".*_DESI.*_obs$", "DESI.*obs", ".*DESI.*"]
+
+features:
+  metabolite_subset: null
+  max_desi_desi_pairs: 5000
+
+# ---------- ROI: cross-condition grouping ----------
+# roi_group_regex collapses per-replicate labels (e.g. Ctrl_bronch_01,
+# HDM_Bronch_06) into a single "bronch" ROI column, so Ctrl and HDM samples
+# share the same ROI feature and can be compared / combined downstream.
+roi:
+  join_roi: true
+  write_pixel_table: true
+  roi_binary_prefix: "ROI__"
+  label_col: "name"
+  roi_subset: null
+  roi_group_regex: "(?i)(?:Ctrl_|HDM_)?([Bb]ronch)"   # study-specific — edit for your design
+
+  distance_halo:
+    enabled: true
+    radius: 12
+    decay: "gaussian"
+    suffix: "_decay"
+    physical_pixel_size_um: 100
+
+# ---------- Cell mapping disabled for this run ----------
+cell:
+  enabled: false
+  mode: "spatialdata"
+  crop_pixels_to_cell_extent: true
+  shapes:
+    name_regex: "cell_types_cells|cell_types|cells"
+  rm_cell_types: ["Unidentified"]
+  radius_assignment:
+    enabled: true
+    cell_radius_scalar: 1.0
+    pixel_feature_mode: "onehot_any"
+    prefix: "CELL__"
+    write_cell_meta_csv: true
+    write_pixel_to_cell_map_csv: true
+    halo:
+      enabled: true
+      radius: 12
+      decay: "gaussian"
+      suffix: "_halo"
+  table:
+    type_col_candidates: ["cell.types:Cell.type", "Cell.type", "cell_type", "CellType"]
+    area_col_candidates: ["Area", "area", "cell_area", "Cell.Area", "cell.types:Area"]
+
+# ---------- Correlations: DESI×DESI and DESI×ROI only (no cell) ----------
+pearson:
+  enabled: true
+  outputs:
+    desi_desi: true
+    desi_cell: false
+    desi_roi: true
+  sample_sets:
+    mode: "each+all"
+    custom: null
+  fdr:
+    enabled: true
+    p_columns: ["p"]
+
+spearman:
+  enabled: true
+  outputs:
+    desi_desi: true
+    desi_cell: false
+    desi_roi: true
+  sample_sets:
+    mode: "each+all"
+    custom: null
+  fdr:
+    enabled: true
+    p_columns: ["p"]
+
+weights:
+  type: "knn"
+  knn_k: 32
+  threshold: null
+  threshold_multiplier: 5.0
+  binary: true
+  cache_dir: "auto"
+
+# ---------- Moran: LOCAL only, narrowed to a specific hypothesis ----------
+# Global Moran outputs are all off. Local Moran runs only on the explicit
+# pair_subset lists below — one line per pair of interest.
+moran:
+  enabled: true
+
+  permutations:
+    enabled: false
+    n: 999
+    use_p_sim_for_stats: true
+
+  outputs:
+    global:
+      univariate: false
+      bivariate_desi_desi: false
+      bivariate_desi_cell: false
+      bivariate_desi_roi: false
+
+    local:
+      enabled: true
+      write_pixel_maps: true
+      alpha: 0.05
+      fdr_on_local_p: true
+      p_source: "auto"
+
+      bivariate_desi_desi:
+        enabled: true
+        pair_subset:                    # Example: eicosanoid pathway pairs
+          - ["your_metabolite_A", "your_reference_metabolite"]
+          - ["your_metabolite_B", "your_reference_metabolite"]
+          - ["your_metabolite_C", "your_reference_metabolite"]
+
+      bivariate_desi_cell:
+        enabled: false
+        pair_subset: null
+
+      bivariate_desi_roi:
+        enabled: true
+        pair_subset:                    # Example: colocalisation with a specific tissue region
+          - ["your_reference_metabolite", "ROI__bronch"]
+
+  combine:
+    enabled: true
+    stouffer_weight: "sqrt_n"
+
+  fdr:
+    enabled: true
+    p_columns: ["p_norm", "p_sim", "p_fisher", "p_stouffer", "p_random_effects"]

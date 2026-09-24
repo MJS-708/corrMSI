@@ -1,0 +1,164 @@
+# =============================================================================
+# corrMSI — EXPLORATORY example config
+# -----------------------------------------------------------------------------
+# Runs the full pipeline: ROI + cell mapping + halos + global Moran + local
+# Moran (LISA) + Spearman + Pearson + hotspot neighbourhood profiling.
+#
+# Use this template when starting a new study and you want the widest possible
+# output surface. Narrow it down for follow-up runs (see: example_focused_lisa.yaml).
+#
+# Usage:
+#   python run_desi_from_config.py configs/example_exploratory.yaml
+# =============================================================================
+
+io:
+  zarr_path: "path/to/your/spatialdata.zarr"    # SpatialData object (DESI tables + shapes)
+  out_dir: "path/to/your/output_directory"       # CSVs + QC PNGs written here
+
+# ---------- Auto-detection of tables/shapes inside the .zarr ----------
+detect:
+  grid_suffix_candidates: ["_DESI_NORM_grid", "_DESI_grid", "_grid"]
+  roi_suffix_candidates: ["_anatomical_labels", "_roi", "_ROIs", "_labels", "_label"]
+  desi_table_regex: ["DESI.*_obs$", ".*_DESI.*_obs$", "DESI.*obs", ".*DESI.*"]
+
+features:
+  metabolite_subset: null       # null = use all metabolites in the DESI table
+  max_desi_desi_pairs: 5000     # cap on random-sampled DESI×DESI pair count
+
+# ---------- ROI annotation + optional distance-decay halo ----------
+roi:
+  join_roi: true
+  write_pixel_table: true
+  roi_binary_prefix: "ROI__"
+  label_col: "name"             # column in the ROI GeoDataFrame that holds region names
+  roi_subset: null              # null = all ROIs; or list e.g. ["Cortex", "Hippocampus"]
+  roi_group_regex: null         # e.g. "(?i)(?:Ctrl_|HDM_)?([Bb]ronch)" to collapse replicates
+
+  distance_halo:
+    enabled: true
+    radius: 12                  # coordinate units (1 unit = 1 DESI pixel = ~100 µm here)
+    decay: "gaussian"           # "linear" | "gaussian" | "binary"
+    suffix: "_decay"
+    physical_pixel_size_um: 100 # ONLY used for the radius → mm sanity check
+    # radius 12 × 100 µm = 1.2 mm — must be within [0.05, 10] mm or the pipeline raises
+
+# ---------- Cell-resolved mapping ----------
+cell:
+  enabled: true
+  coordinate_system: "your_sample_name"   # target CS for sd.transform (usually the sample name)
+  mode: "spatialdata"                     # "spatialdata" (default) | "table" (legacy)
+  crop_pixels_to_cell_extent: true        # tighten pixel table to cell bounding box
+  shapes:
+    name_regex: "cell_types_cells|cell_types|cells"
+  rm_cell_types: ["not-annotated"]        # cell types to drop before mapping
+
+  radius_assignment:
+    enabled: true
+    cell_radius_scalar: 3            # 1.0 = true cell boundary; >1 inflates for halo starting point
+    pixel_feature_mode: "onehot_any" # "onehot_any" | "counts"
+    prefix: "CELL__"
+    write_cell_meta_csv: true
+    write_pixel_to_cell_map_csv: true
+    halo:
+      enabled: true
+      radius: 10                     # coordinate units — validated vs pixel spacing
+      decay: "gaussian"              # "linear" | "gaussian" | "binary"
+      suffix: "_halo"
+
+  table:                             # only used by legacy mode="table"
+    type_col_candidates: ["cell.types:Cell.type", "Cell.type", "cell_type", "CellType"]
+    area_col_candidates: ["Area", "area", "cell_area", "Cell.Area", "cell.types:Area"]
+
+# ---------- Hotspot neighbourhood profiling ----------
+# For each anchor, find hotspot pixels then summarise DESI intensities and
+# cell-type fractions in a KDTree neighbourhood. One CSV per anchor.
+hotspot_neighbourhood:
+  enabled: true
+  radius: 15                                # default neighbourhood radius
+  hotspot_threshold_quantile: 0.90          # default top-decile for desi_obs anchors
+  anchors:
+    - anchor_type: "desi_obs"               # hotspot = pixels above the quantile of this metabolite
+      anchor_name: "your_metabolite_name"
+      hotspot_threshold_quantile: 0.90      # optional per-anchor override
+    - anchor_type: "cell_type"              # hotspot = pixels inside CELL__<name>
+      anchor_name: "your_cell_type"
+      radius: 20                            # optional per-anchor radius override
+    - anchor_type: "roi"                    # hotspot = pixels inside ROI__<name>
+      anchor_name: "your_roi_label"
+
+# ---------- Pairwise correlations ----------
+pearson:
+  enabled: true
+  outputs:
+    desi_desi: true
+    desi_cell: true
+    desi_roi: true
+  sample_sets:
+    mode: "each+all"       # "each" | "all" | "each+all" | "pairwise" | "custom"
+    custom: null
+  fdr:
+    enabled: true
+    p_columns: ["p"]
+
+spearman:
+  enabled: true
+  outputs:
+    desi_desi: true
+    desi_cell: true
+    desi_roi: true
+  sample_sets:
+    mode: "each+all"
+    custom: null
+  fdr:
+    enabled: true
+    p_columns: ["p"]
+
+# ---------- Spatial weights ----------
+weights:
+  type: "knn"                    # "knn" | "distanceband"
+  knn_k: 32
+  threshold: null                # distanceband: null = auto (median NN × 1.01)
+  threshold_multiplier: 5.0      # distanceband threshold scaling
+  binary: true
+  cache_dir: "auto"              # "auto" = <out_dir>/.weights_cache; null = memory only
+
+# ---------- Moran's I (global + local) + cross-sample combining ----------
+moran:
+  enabled: true
+
+  permutations:
+    enabled: false
+    n: 999
+    use_p_sim_for_stats: true    # prefer p_sim/z_sim over analytic when permutations ran
+
+  outputs:
+    global:
+      univariate: true
+      bivariate_desi_desi: true
+      bivariate_desi_cell: true
+      bivariate_desi_roi: true
+
+    local:
+      enabled: true
+      write_pixel_maps: true     # per-pixel CSVs to local_bv/met_{met,cell,roi}/
+      alpha: 0.05
+      fdr_on_local_p: true       # BH-FDR across pixels per feature
+      p_source: "auto"           # "auto" | "p_sim" | "p_z_sim" | "p_norm"
+
+      bivariate_desi_desi:
+        enabled: true
+        pair_subset: null        # null = all pairs; or explicit list of [A, B] pairs
+      bivariate_desi_cell:
+        enabled: true
+        pair_subset: null
+      bivariate_desi_roi:
+        enabled: true
+        pair_subset: null
+
+  combine:
+    enabled: true
+    stouffer_weight: "sqrt_n"    # "sqrt_n" | "n" | "equal" | "inv_se"
+
+  fdr:
+    enabled: true
+    p_columns: ["p_norm", "p_sim", "p_fisher", "p_stouffer", "p_random_effects"]
