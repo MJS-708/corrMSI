@@ -4,4 +4,3 @@ __pycache__/
 *.ipynb
 *.docx
 outputs/
-.claude/
