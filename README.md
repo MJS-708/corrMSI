@@ -1,3 +1,5 @@
+<img src="assets/corrMSI_logo.png" alt="corrMSI" width="150" align="right">
+
 # corrMSI
 
 Tools for analyzing multimodal DESI-MRM mass spectrometry imaging data integrated with other spatial modalities including histochemistry, spatial transcriptomics, and spatial proteomics (from `.zarr` SpatialData objects).
